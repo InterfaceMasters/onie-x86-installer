@@ -102,7 +102,7 @@ done
 echo "Done."
 
 echo "Restoring /boot directory to the boot filesystem"
-tar x -C /mnt < /tmp/boot-fs.tar.gz
+tar xz -C /mnt < /tmp/boot-fs.tar.gz
 rm /tmp/boot-fs.tar.gz
 echo "Done."
 
