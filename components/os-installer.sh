@@ -56,8 +56,22 @@ lastsector=`parted -ms "${target_dev}" "unit s" "print" | \
 egrep "^1:" | cut -d: -f3 | tr -d 's'`
 
 [ "$lastsector" = "" ] && {
-echo "Incompatible partition format on the device ${target_dev}."
-exit 1
+  if [ -x /self-installer/format-installer.sh ] ; then
+  /self-installer/format-installer.sh
+  parted -ms "${target_dev}" \
+  `parted -ms "${target_dev}" "unit s" "print" | \
+  egrep "^[0-9]+:" | egrep -v "^1:" | cut -d: -f1 | sort -rn | \
+   sed -e 's/^/"rm /' -e 's/:.\+$/"/' `
+  lastsector=`parted -ms "${target_dev}" "unit s" "print" | \
+  egrep "^1:" | cut -d: -f3 | tr -d 's'`
+  [ "$lastsector" = "" ] && {
+    echo "Installation failed."
+    exit 1
+    }
+  else
+    echo "Incompatible partition format on the device ${target_dev}."
+    exit 1
+  fi
 }
 
 newsector="$((${lastsector}+1))"
