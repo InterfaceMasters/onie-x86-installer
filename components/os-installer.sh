@@ -165,7 +165,7 @@ echo "Done."
 
 echo "Enabling login on the serial console..."
 if [ -d /mnt/etc/init/ ] ; then
-  cat >> /mnt/etc/init/ttyS0.conf <<___EOF___
+  cat > /mnt/etc/init/ttyS0.conf <<___EOF___
 # ttyS0 - getty
 #
 # This service maintains a getty on tty1 from the point the system is
@@ -203,7 +203,7 @@ GRUB_DEFAULT=0
 GRUB_HIDDEN_TIMEOUT_QUIET=true
 GRUB_TIMEOUT=10
 GRUB_DISTRIBUTOR=\`lsb_release -i -s 2> /dev/null || echo Debian\`
-GRUB_CMDLINE_LINUX_DEFAULT="nomodeset"
+GRUB_CMDLINE_LINUX_DEFAULT="quiet nomodeset"
 GRUB_CMDLINE_LINUX="console=tty0 console=ttyS0,115200n8"
 
 # Uncomment to enable BadRAM filtering, modify to suit your needs
