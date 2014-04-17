@@ -167,8 +167,13 @@ ___EOF___
 echo "Done."
 
 echo "Enabling login on the serial console..."
-if [ -d /mnt/etc/init/ ] ; then
-  cat > /mnt/etc/init/ttyS0.conf <<___EOF___
+if [ -f /mnt/etc/inittab ] ; then
+  sed -i -e 's/^#\+T0:/T0:/' -e 's/ttyS0 9600 vt100$/ttyS0 115200 vt100/' \
+   /mnt/etc/inittab
+  echo "Done."
+else
+  if [ -d /mnt/etc/init/ ] ; then
+    cat > /mnt/etc/init/ttyS0.conf <<___EOF___
 # ttyS0 - getty
 #
 # This service maintains a getty on tty1 from the point the system is
@@ -184,10 +189,6 @@ stop on runlevel [!2345]
 respawn
 exec /sbin/getty -8 115200 ttyS0
 ___EOF___
-  echo "Done."
-else
-  if [ -f /mnt/etc/inittab ] ; then
-    sed -i -e 's/^#\+T0:/T0:/' /mnt/etc/inittab
     echo "Done."
   else
     echo "No recognizable login configuration found."
