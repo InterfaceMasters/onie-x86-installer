@@ -143,6 +143,8 @@ echo "Updating target filesystems UUIDs..."
 sync
 BOOT_UUID=`/mnt/sbin/blkid -s UUID -o value -n ext2,ext3,ext4 "${target_dev}1"`
 ROOT_UUID=`/mnt/sbin/blkid -s UUID -o value -n ext2,ext3,ext4 "${target_dev}2"`
+rm -f "/mnt/dev/disk/by-uuid/${ROOT_UUID}"
+ln -s "${target_dev}2" "/mnt/dev/disk/by-uuid/${ROOT_UUID}"
 echo "Done."
 
 #echo "Removing original GRUB..."
