@@ -154,6 +154,7 @@ echo "Done."
 #echo "Done."
 
 echo "Generating list of mounted filesystems..."
+rm -f /mnt/etc/mtab
 egrep '^/dev/' /proc/mounts | grep '/mnt/' | sed -e 's@/mnt/@/@' > /mnt/etc/mtab
 echo "Done."
 
