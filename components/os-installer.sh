@@ -195,6 +195,15 @@ ___EOF___
   fi
 fi
 
+onie_kernel_file="/mnt/boot/onie/`ls /mnt/boot/onie/vmlinuz-*-onie | head -n 1`"
+onie_ramdisk_file="/mnt/boot/onie/`ls /mnt/boot/onie/initrd.img-*-onie | head -n 1`"
+if [ -f "${onie_kernel_file}" -a -f "${onie_ramdisk_file}" ]
+  then
+    echo "Adding ONIE files..."
+    cp "${onie_kernel_file}" /mnt/boot/vmlinuz-00-onie
+    cp "${onie_ramdisk_file}" /mnt/boot/initrd.img-00-onie
+fi
+
 echo "Updating GRUB..."
 cat > /mnt/etc/default/grub <<___EOF___
 # If you change this file, run 'update-grub' afterwards to update
