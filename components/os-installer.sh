@@ -243,6 +243,94 @@ GRUB_SERIAL_COMMAND="serial --speed=115200 --unit=0 --word=8 --parity=no --stop=
 # Uncomment to get a beep at grub start
 #GRUB_INIT_TUNE="480 440 1"
 ___EOF___
+cat > /mnt/etc/grub.d/50_onie_grub <<___EOF___
+#!/bin/sh
+
+#  Copyright (C) 2014 Curt Brune <curt@cumulusnetworks.com>
+#  Copyright (C) 2015 Interface Masters Technologies, Inc.
+#
+#  SPDX-License-Identifier:     GPL-2.0
+
+# This file provides a GRUB menu entry for ONIE.
+#
+# Place this file in /etc/grub.d on the installed system, and grub-mkconfig
+# will use this file when generating a grub configuration file.
+#
+# This partition layout uses the same ONIE-BOOT partition for ONIE and OS boot
+# files, so only one GRUB menu has to be updated.
+
+tmp_mnt=
+onie_umount_partition()
+{
+    umount $tmp_mnt > /dev/null 2>&1
+    rmdir $tmp_mnt || {
+        echo "ERROR: Problems removing temp directory: $tmp_mnt"
+        exit 1
+    }
+}
+
+# Mount the ONIE partition
+tmp_mnt=$(mktemp -d)
+trap onie_umount_partition EXIT
+
+mount LABEL=ONIE-BOOT $tmp_mnt || {
+    echo "ERROR: Problems trying to mount ONIE-BOOT partition"
+    exit 1
+}
+
+onie_root_dir="${tmp_mnt}/onie"
+[ -d "$onie_root_dir" ] || {
+    echo "ERROR: Unable to find ONIE root directory: $onie_root_dir"
+    exit 1
+}
+
+# add the ONIE machine configuration data
+cat $onie_root_dir/grub/grub-machine.cfg
+
+# add ONIE configuration common to all ONIE boot modes
+cat $onie_root_dir/grub/grub-common.cfg
+
+DEFAULT_CMDLINE="$GRUB_CMDLINE_LINUX $GRUB_CMDLINE_LINUX_DEFAULT $GRUB_ONIE_PLATFORM_ARGS $GRUB_ONIE_DEBUG_ARGS"
+GRUB_ONIE_CMDLINE_LINUX=${GRUB_ONIE_CMDLINE_LINUX:-"$DEFAULT_CMDLINE"}
+
+ONIE_CMDLINE="quiet $GRUB_ONIE_CMDLINE_LINUX"
+cat << EOF
+submenu ONIE {
+EOF
+for mode in install rescue uninstall update embed ; do
+    case "$mode" in
+        install)
+            boot_message="ONIE: OS Install Mode ..."
+            ;;
+        rescue)
+            boot_message="ONIE: Rescue Mode ..."
+            ;;
+        uninstall)
+            boot_message="ONIE: OS Uninstall Mode ..."
+            ;;
+        update)
+            boot_message="ONIE: ONIE Update Mode ..."
+            ;;
+        embed)
+            boot_message="ONIE: ONIE Embed Mode ..."
+            ;;
+        *)
+            ;;
+    esac
+      cat <<EOF
+menuentry "\$onie_menu_$mode" {
+        onie_entry_start
+        echo    "$boot_message"
+        linux   /onie/vmlinuz-\${onie_kernel_version}-onie $ONIE_CMDLINE boot_reason=$mode
+        initrd  /onie/initrd.img-\${onie_kernel_version}-onie
+        onie_entry_end
+}
+EOF
+done
+cat << EOF
+}
+EOF
+___EOF___
 
 chroot /mnt grub-install "${target_dev}"
 chroot /mnt update-grub
