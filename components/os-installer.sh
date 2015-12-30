@@ -262,43 +262,43 @@ cat > /mnt/etc/grub.d/50_onie_grub <<___EOF___
 tmp_mnt=
 onie_umount_partition()
 {
-    umount $tmp_mnt > /dev/null 2>&1
-    rmdir $tmp_mnt || {
-        echo "ERROR: Problems removing temp directory: $tmp_mnt"
+    umount \$tmp_mnt > /dev/null 2>&1
+    rmdir \$tmp_mnt || {
+        echo "ERROR: Problems removing temp directory: \$tmp_mnt"
         exit 1
     }
 }
 
 # Mount the ONIE partition
-tmp_mnt=$(mktemp -d)
+tmp_mnt=\$(mktemp -d)
 trap onie_umount_partition EXIT
 
-mount LABEL=ONIE-BOOT $tmp_mnt || {
+mount LABEL=ONIE-BOOT \$tmp_mnt || {
     echo "ERROR: Problems trying to mount ONIE-BOOT partition"
     exit 1
 }
 
-onie_root_dir="${tmp_mnt}/onie"
-[ -d "$onie_root_dir" ] || {
-    echo "ERROR: Unable to find ONIE root directory: $onie_root_dir"
+onie_root_dir="\${tmp_mnt}/onie"
+[ -d "\$onie_root_dir" ] || {
+    echo "ERROR: Unable to find ONIE root directory: \$onie_root_dir"
     exit 1
 }
 
 # add the ONIE machine configuration data
-cat $onie_root_dir/grub/grub-machine.cfg
+cat \$onie_root_dir/grub/grub-machine.cfg
 
 # add ONIE configuration common to all ONIE boot modes
-cat $onie_root_dir/grub/grub-common.cfg
+cat \$onie_root_dir/grub/grub-common.cfg
 
-DEFAULT_CMDLINE="$GRUB_CMDLINE_LINUX $GRUB_CMDLINE_LINUX_DEFAULT $GRUB_ONIE_PLATFORM_ARGS $GRUB_ONIE_DEBUG_ARGS"
-GRUB_ONIE_CMDLINE_LINUX=${GRUB_ONIE_CMDLINE_LINUX:-"$DEFAULT_CMDLINE"}
+DEFAULT_CMDLINE="\$GRUB_CMDLINE_LINUX \$GRUB_CMDLINE_LINUX_DEFAULT \$GRUB_ONIE_PLATFORM_ARGS \$GRUB_ONIE_DEBUG_ARGS"
+GRUB_ONIE_CMDLINE_LINUX=\${GRUB_ONIE_CMDLINE_LINUX:-"\$DEFAULT_CMDLINE"}
 
-ONIE_CMDLINE="quiet $GRUB_ONIE_CMDLINE_LINUX"
+ONIE_CMDLINE="quiet \$GRUB_ONIE_CMDLINE_LINUX"
 cat << EOF
 submenu ONIE {
 EOF
 for mode in install rescue uninstall update embed ; do
-    case "$mode" in
+    case "\$mode" in
         install)
             boot_message="ONIE: OS Install Mode ..."
             ;;
@@ -318,11 +318,11 @@ for mode in install rescue uninstall update embed ; do
             ;;
     esac
       cat <<EOF
-menuentry "\$onie_menu_$mode" {
+menuentry "\\\$onie_menu_\$mode" {
         onie_entry_start
-        echo    "$boot_message"
-        linux   /onie/vmlinuz-\${onie_kernel_version}-onie $ONIE_CMDLINE boot_reason=$mode
-        initrd  /onie/initrd.img-\${onie_kernel_version}-onie
+        echo    "\$boot_message"
+        linux   /onie/vmlinuz-\\\${onie_kernel_version}-onie \$ONIE_CMDLINE boot_reason=\$mode
+        initrd  /onie/initrd.img-\\\${onie_kernel_version}-onie
         onie_entry_end
 }
 EOF
@@ -331,6 +331,7 @@ cat << EOF
 }
 EOF
 ___EOF___
+chmod 755 /mnt/etc/grub.d/50_onie_grub
 
 chroot /mnt grub-install "${target_dev}"
 chroot /mnt update-grub
