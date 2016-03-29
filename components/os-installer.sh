@@ -75,7 +75,7 @@ egrep "^1:" | cut -d: -f3 | tr -d 's'`
 }
 
 newsector="$((${lastsector}+1))"
-                                                                                
+
 parted -msaoptimal "$target_dev" "mkpart primary ext4 ${newsector}s -1s"
 
 sync
@@ -147,11 +147,12 @@ rm -f "/mnt/dev/disk/by-uuid/${ROOT_UUID}"
 ln -s "${target_dev}2" "/mnt/dev/disk/by-uuid/${ROOT_UUID}"
 echo "Done."
 
-#echo "Removing original GRUB..."
-#
-#rm -rf /mnt/boot/grub
-#
-#echo "Done."
+echo "Removing original GRUB..."
+
+rm -rf /mnt/boot/grub/grubenv
+rm -rf /mnt/boot/grub/grub.cfg
+
+echo "Done."
 
 echo "Generating list of mounted filesystems..."
 rm -f /mnt/etc/mtab
@@ -193,15 +194,6 @@ ___EOF___
   else
     echo "No recognizable login configuration found."
   fi
-fi
-
-onie_kernel_file="`ls /mnt/boot/onie/vmlinuz-*-onie | head -n 1`"
-onie_ramdisk_file="`ls /mnt/boot/onie/initrd.img-*-onie | head -n 1`"
-if [ -f "${onie_kernel_file}" -a -f "${onie_ramdisk_file}" ]
-  then
-    echo "Adding ONIE files..."
-    cp "${onie_kernel_file}" /mnt/boot/vmlinuz-00-onie
-    cp "${onie_ramdisk_file}" /mnt/boot/initrd.img-00-onie
 fi
 
 echo "Updating GRUB..."
@@ -287,8 +279,45 @@ onie_root_dir="\${tmp_mnt}/onie"
 # add the ONIE machine configuration data
 cat \$onie_root_dir/grub/grub-machine.cfg
 
-# add ONIE configuration common to all ONIE boot modes
-cat \$onie_root_dir/grub/grub-common.cfg
+# common etries from grub-common.cfg
+cat << EOF
+
+set timeout=5
+
+onie_submenu="ONIE (Version: \\\$onie_version)"
+
+onie_menu_install="ONIE: Install OS"
+export onie_menu_install
+onie_menu_rescue="ONIE: Rescue"
+export onie_menu_rescue
+onie_menu_uninstall="ONIE: Uninstall OS"
+export onie_menu_uninstall
+onie_menu_update="ONIE: Update ONIE"
+export onie_menu_update
+onie_menu_embed="ONIE: Embed ONIE"
+export onie_menu_embed
+
+set fallback="\\\${onie_menu_rescue}"
+
+function onie_entry_start {
+  insmod gzio
+  insmod ext2
+  if [ "\\\$onie_partition_type" = "gpt" ] ; then
+    insmod part_gpt
+    set root='(hd0,gpt2)'
+  else
+    insmod part_msdos
+    set root='(hd0,msdos1)'
+  fi
+  search --no-floppy --label --set=root ONIE-BOOT
+}
+
+function onie_entry_end {
+  echo "Version   : \\\$onie_version"
+  echo "Build Date: \\\$onie_build_date"
+}
+EOF
+# end of grub-common.cfg
 
 DEFAULT_CMDLINE="\$GRUB_CMDLINE_LINUX \$GRUB_CMDLINE_LINUX_DEFAULT \$GRUB_ONIE_PLATFORM_ARGS \$GRUB_ONIE_DEBUG_ARGS"
 GRUB_ONIE_CMDLINE_LINUX=\${GRUB_ONIE_CMDLINE_LINUX:-"\$DEFAULT_CMDLINE"}
@@ -333,9 +362,23 @@ EOF
 ___EOF___
 chmod 755 /mnt/etc/grub.d/50_onie_grub
 
+rm -rf /mnt/boot/vmlinuz-00-onie
+rm -rf /mnt/boot/initrd.img-00-onie
+
 chroot /mnt grub-install "${target_dev}"
 chroot /mnt update-grub
 chroot /mnt grub-install "${target_dev}"
+
+# Do not make this to appear in ONIE menu.
+onie_kernel_file="`ls /mnt/boot/onie/vmlinuz-*-onie | head -n 1`"
+onie_ramdisk_file="`ls /mnt/boot/onie/initrd.img-*-onie | head -n 1`"
+if [ -f "${onie_kernel_file}" -a -f "${onie_ramdisk_file}" ]
+  then
+    echo "Adding ONIE files..."
+    cp "${onie_kernel_file}" /mnt/boot/vmlinuz-00-onie
+    cp "${onie_ramdisk_file}" /mnt/boot/initrd.img-00-onie
+fi
+
 echo "Done."
 
 echo "Un-mounting everything..."
