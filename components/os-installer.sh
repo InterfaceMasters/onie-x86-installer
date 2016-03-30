@@ -84,7 +84,7 @@ do sleep 1
 done
 
 echo "Installing image from ${image_location}..."
-wget -O- "${image_location}" | bzip2 -dc | ./partclone.restore -q -s - -o "${target_dev}"2 || {
+./curl -s "${image_location}" | bzip2 -dc | ./partclone.restore -s - -o "${target_dev}"2 || {
 echo "Image installation failed."
 exit 1
 }
