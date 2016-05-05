@@ -147,13 +147,6 @@ rm -f "/mnt/dev/disk/by-uuid/${ROOT_UUID}"
 ln -s "${target_dev}2" "/mnt/dev/disk/by-uuid/${ROOT_UUID}"
 echo "Done."
 
-echo "Removing original GRUB..."
-
-rm -rf /mnt/boot/grub/grubenv
-rm -rf /mnt/boot/grub/grub.cfg
-
-echo "Done."
-
 echo "Generating list of mounted filesystems..."
 rm -f /mnt/etc/mtab
 egrep '^/dev/' /proc/mounts | grep '/mnt/' | sed -e 's@/mnt/@/@' > /mnt/etc/mtab
@@ -365,9 +358,11 @@ chmod 755 /mnt/etc/grub.d/50_onie_grub
 rm -rf /mnt/boot/vmlinuz-00-onie
 rm -rf /mnt/boot/initrd.img-00-onie
 
+chattr -i /mnt/boot/grub/i386-pc/core.img
 chroot /mnt grub-install "${target_dev}"
 chroot /mnt update-grub
 chroot /mnt grub-install "${target_dev}"
+chattr +i /mnt/boot/grub/i386-pc/core.img
 
 # Do not make this to appear in ONIE menu.
 onie_kernel_file="`ls /mnt/boot/onie/vmlinuz-*-onie | head -n 1`"
