@@ -358,9 +358,11 @@ chmod 755 /mnt/etc/grub.d/50_onie_grub
 rm -rf /mnt/boot/vmlinuz-00-onie
 rm -rf /mnt/boot/initrd.img-00-onie
 
+chattr -i /mnt/boot/grub/i386-pc/core.img
 chroot /mnt grub-install "${target_dev}"
 chroot /mnt update-grub
 chroot /mnt grub-install "${target_dev}"
+chattr +i /mnt/boot/grub/i386-pc/core.img
 
 # Do not make this to appear in ONIE menu.
 onie_kernel_file="`ls /mnt/boot/onie/vmlinuz-*-onie | head -n 1`"
