@@ -1,5 +1,9 @@
 #!/bin/sh
 
+#
+# Interface Masters Technologies, Inc. 2016
+#
+
 image_location=`echo "${onie_exec_url}" | sed -e 's/\.sh$/-image.bin/'`
 
 # Default ONIE block device
