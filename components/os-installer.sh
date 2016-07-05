@@ -1,6 +1,14 @@
 #!/bin/sh
 
-image_location=`echo "${onie_exec_url}" | sed -e 's/\.sh$/-image.bin/'`
+#
+# Interface Masters Technologies, Inc. 2016
+#
+
+#
+# IMT installer has restrictions on names for installer and image.
+# But ONIE has inexact names that may not end with .sh.
+# In this case image still should be ended with '-image.bin'.
+image_location=`echo "${onie_exec_url}" | sed -e 's/[\.sh]*$/-image.bin/'`
 
 # Default ONIE block device
 install_device_platform()

@@ -1,5 +1,9 @@
 #!/bin/sh -e
 
+#
+# Interface Masters Technologies, Inc. 2016
+#
+
 cd components
 tar czf ../tmp_archive.tar.gz .
 sha1=`sha1sum ../tmp_archive.tar.gz | awk '{ print $1 }'`
