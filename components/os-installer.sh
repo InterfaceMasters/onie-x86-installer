@@ -4,11 +4,19 @@
 # Interface Masters Technologies, Inc. 2016
 #
 
-#
 # IMT installer has restrictions on names for installer and image.
 # But ONIE has inexact names that may not end with .sh.
 # In this case image still should be ended with '-image.bin'.
 image_location=`echo "${onie_exec_url}" | sed -e 's/[\.sh]*$/-image.bin/'`
+
+# Check for presence of installer image before repartitioning ssd.
+echo "Check image file presence at ${image_location}..."
+if ./curl --output /dev/null --silent --head --fail "${image_location}"; then
+  echo "Image ${image_location} is OK..."
+else
+  echo "Image ${image_location} is not found! Aborting..."
+  exit 1
+fi
 
 # Default ONIE block device
 install_device_platform()
