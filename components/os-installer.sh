@@ -99,6 +99,33 @@ until blockdev --rereadpt "${target_dev}"
 do sleep 1
 done
 
+# Create partitions for image install and reserved partitions
+iss_inst_dev_num=2
+reserved_dev_num=3
+
+free_dev_start=$(fdisk -l $target_dev | grep ${target_dev}2 | awk '{print $2}' | tr -d '\n')
+free_dev_end=$(fdisk -l $target_dev | grep ${target_dev}2 | awk '{print $3}' | tr -d '\n')
+free_sector_range=$(( ${free_dev_end} - ${free_dev_start} ))
+if [ $((free_sector_range%2)) -ne 0 ]; then free_sector_range=$(( $free_sector_range - 1 )); fi
+iss_inst_dev_end=$(( $free_sector_range / 2 ))
+reserved_dev_start=$(( ${iss_inst_dev_end} + 1 ))
+reserved_dev_end=$(( ${free_dev_end} - 1 ))
+
+echo "d
+${iss_inst_dev_num}
+n
+p
+${iss_inst_dev_num}
+${free_dev_start}
+${iss_inst_dev_end}
+n
+p
+${reserved_dev_num}
+${reserved_dev_start}
+${reserved_dev_end}
+
+w" | fdisk $target_dev
+
 echo "Installing image from ${image_location}..."
 ./curl -s "${image_location}" | bzip2 -dc | ./partclone.restore -s - -o "${target_dev}"2 || {
 echo "Image installation failed."
@@ -151,6 +178,8 @@ cp -a /mnt/lib64 /lib64
 cp -a /mnt/sbin/e2fsck /tmp/utils/
 cp -a /mnt/sbin/fsck.ext2 /tmp/utils/
 cp -a /mnt/sbin/fsck.ext4 /tmp/utils/
+cp -a ./curl /mnt/sbin/
+cp -a ./partclone.restore /mnt/sbin/
 echo "Done."
 
 echo "Updating target filesystems UUIDs..."
