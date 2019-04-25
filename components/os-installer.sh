@@ -178,8 +178,6 @@ cp -a /mnt/lib64 /lib64
 cp -a /mnt/sbin/e2fsck /tmp/utils/
 cp -a /mnt/sbin/fsck.ext2 /tmp/utils/
 cp -a /mnt/sbin/fsck.ext4 /tmp/utils/
-cp -a ./curl /mnt/sbin/
-cp -a ./partclone.restore /mnt/sbin/
 echo "Done."
 
 echo "Updating target filesystems UUIDs..."
