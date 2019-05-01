@@ -409,13 +409,15 @@ chroot /mnt update-grub
 chroot /mnt grub-install "${target_dev}"
 chattr +i /mnt/boot/grub/i386-pc/core.img
 
-iss_image_version=$(chroot /mnt dpkg -l | grep "Switching platform" | awk '{print $3}' | tr -d '\n')
-iss_image_name=$(echo "iss-release-$iss_image_version" | tr -d '\n')
-menuentry_id=0
-iss_kernel_file="`ls /mnt/boot/vmlinuz-*-im-amd64 | rev | cut -d'/' -f 1 | rev | tr -d '\n'`"
-iss_ramdisk_file="`ls /mnt/boot/initrd.img-*-im-amd64 | rev | cut -d'/' -f 1 | rev | tr -d '\n'`"
+# Modify GRUB configuration file with the ISS custom entries
+if [ -f /mnt/usr/bin/iss ] ; then
+  iss_image_version=$(chroot /mnt dpkg -l | grep "Switching platform" | awk '{print $3}' | tr -d '\n')
+  iss_image_name=$(echo "iss-release-$iss_image_version" | tr -d '\n')
+  menuentry_id=0
+  iss_kernel_file="`ls /mnt/boot/vmlinuz-*-im-amd64 | rev | cut -d'/' -f 1 | rev | tr -d '\n'`"
+  iss_ramdisk_file="`ls /mnt/boot/initrd.img-*-im-amd64 | rev | cut -d'/' -f 1 | rev | tr -d '\n'`"
 
-cat > /tmp/grub_$menuentry_id.cfg <<___EOF___
+  cat > /tmp/grub_$menuentry_id.cfg <<___EOF___
 menuentry '$iss_image_name' --class debian --class gnu-linux --class gnu --class os {
         entry_id=$menuentry_id
         load_video
@@ -431,21 +433,21 @@ menuentry '$iss_image_name' --class debian --class gnu-linux --class gnu --class
 }
 ___EOF___
 
-# Modify GRUB configuration file with ISS custom entries
-# Head part.
-head_part_start=1
-head_part_end=$(grep -rn "### BEGIN /etc/grub.d/10_linux ###" /mnt/boot/grub/grub.cfg | awk -F: '{print $1}' | tr -d '\n')
-sed -n -e "$head_part_start,$head_part_end p" -e "$head_part_end q" /mnt/boot/grub/grub.cfg > /tmp/grub_head.cfg
+  # Head part.
+  head_part_start=1
+  head_part_end=$(grep -rn "### BEGIN /etc/grub.d/10_linux ###" /mnt/boot/grub/grub.cfg | awk -F: '{print $1}' | tr -d '\n')
+  sed -n -e "$head_part_start,$head_part_end p" -e "$head_part_end q" /mnt/boot/grub/grub.cfg > /tmp/grub_head.cfg
 
-# Tail part.
-tail_part_start=$(grep -rn "### END /etc/grub.d/10_linux ###" /mnt/boot/grub/grub.cfg | awk -F: '{print $1}' | tr -d '\n')
-tail_part_end=$(grep -rn "### END /etc/grub.d/50_onie_grub ###" /mnt/boot/grub/grub.cfg | awk -F: '{print $1}' | tr -d '\n')
-sed -n -e "$tail_part_start,$tail_part_end p" -e "$tail_part_end q" /mnt/boot/grub/grub.cfg > /tmp/grub_tail.cfg
+  # Tail part.
+  tail_part_start=$(grep -rn "### END /etc/grub.d/10_linux ###" /mnt/boot/grub/grub.cfg | awk -F: '{print $1}' | tr -d '\n')
+  tail_part_end=$(grep -rn "### END /etc/grub.d/50_onie_grub ###" /mnt/boot/grub/grub.cfg | awk -F: '{print $1}' | tr -d '\n')
+  sed -n -e "$tail_part_start,$tail_part_end p" -e "$tail_part_end q" /mnt/boot/grub/grub.cfg > /tmp/grub_tail.cfg
 
-# Generate new GRUB config file.
-cat /tmp/grub_head.cfg /tmp/grub_$menuentry_id.cfg /tmp/grub_tail.cfg > /tmp/grub.cfg
-chmod a-w /tmp/grub.cfg
-mv /tmp/grub.cfg /mnt/boot/grub/grub.cfg
+  # Generate new GRUB config file.
+  cat /tmp/grub_head.cfg /tmp/grub_$menuentry_id.cfg /tmp/grub_tail.cfg > /tmp/grub.cfg
+  chmod a-w /tmp/grub.cfg
+  mv /tmp/grub.cfg /mnt/boot/grub/grub.cfg
+fi
 
 # Do not make this to appear in ONIE menu.
 onie_kernel_file="`ls /mnt/boot/onie/vmlinuz-*-onie | head -n 1`"
