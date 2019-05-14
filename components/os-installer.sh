@@ -99,6 +99,33 @@ until blockdev --rereadpt "${target_dev}"
 do sleep 1
 done
 
+# Create partitions for image install and reserved partitions
+iss_inst_dev_num=2
+reserved_dev_num=3
+
+free_dev_start=$(fdisk -l $target_dev | grep ${target_dev}2 | awk '{print $2}' | tr -d '\n')
+free_dev_end=$(fdisk -l $target_dev | grep ${target_dev}2 | awk '{print $3}' | tr -d '\n')
+free_sector_range=$(( ${free_dev_end} - ${free_dev_start} ))
+if [ $((free_sector_range%2)) -ne 0 ]; then free_sector_range=$(( $free_sector_range - 1 )); fi
+iss_inst_dev_end=$(( $free_sector_range / 2 ))
+reserved_dev_start=$(( ${iss_inst_dev_end} + 1 ))
+reserved_dev_end=$(( ${free_dev_end} - 1 ))
+
+echo "d
+${iss_inst_dev_num}
+n
+p
+${iss_inst_dev_num}
+${free_dev_start}
+${iss_inst_dev_end}
+n
+p
+${reserved_dev_num}
+${reserved_dev_start}
+${reserved_dev_end}
+
+w" | fdisk $target_dev
+
 echo "Installing image from ${image_location}..."
 ./curl -s "${image_location}" | bzip2 -dc | ./partclone.restore -s - -o "${target_dev}"2 || {
 echo "Image installation failed."
@@ -381,6 +408,46 @@ chroot /mnt grub-install "${target_dev}"
 chroot /mnt update-grub
 chroot /mnt grub-install "${target_dev}"
 chattr +i /mnt/boot/grub/i386-pc/core.img
+
+# Modify GRUB configuration file with the ISS custom entries
+if [ -f /mnt/usr/bin/iss ] ; then
+  iss_image_version=$(chroot /mnt dpkg -l | grep "Switching platform" | awk '{print $3}' | tr -d '\n')
+  iss_image_name=$(echo "iss-release-$iss_image_version" | tr -d '\n')
+  menuentry_id=0
+  iss_kernel_file="`ls /mnt/boot/vmlinuz-*-im-amd64 | rev | cut -d'/' -f 1 | rev | tr -d '\n'`"
+  iss_ramdisk_file="`ls /mnt/boot/initrd.img-*-im-amd64 | rev | cut -d'/' -f 1 | rev | tr -d '\n'`"
+
+  cat > /tmp/grub_$menuentry_id.cfg <<___EOF___
+menuentry '$iss_image_name' --class debian --class gnu-linux --class gnu --class os {
+        entry_id=$menuentry_id
+        load_video
+        insmod gzio
+        insmod part_msdos
+        insmod ext2
+        set root='(hd0,msdos1)'
+        search --no-floppy --fs-uuid --set=root $BOOT_UUID
+        echo    'Loading $iss_image_name ...'
+        linux   /$iss_kernel_file root="${target_dev}2" ro console=tty0 console=ttyS0,115200n8 quiet nomodeset
+        echo    'Loading initial ramdisk ...'
+        initrd  /$iss_ramdisk_file
+}
+___EOF___
+
+  # Head part.
+  head_part_start=1
+  head_part_end=$(grep -rn "### BEGIN /etc/grub.d/10_linux ###" /mnt/boot/grub/grub.cfg | awk -F: '{print $1}' | tr -d '\n')
+  sed -n -e "$head_part_start,$head_part_end p" -e "$head_part_end q" /mnt/boot/grub/grub.cfg > /tmp/grub_head.cfg
+
+  # Tail part.
+  tail_part_start=$(grep -rn "### END /etc/grub.d/10_linux ###" /mnt/boot/grub/grub.cfg | awk -F: '{print $1}' | tr -d '\n')
+  tail_part_end=$(grep -rn "### END /etc/grub.d/50_onie_grub ###" /mnt/boot/grub/grub.cfg | awk -F: '{print $1}' | tr -d '\n')
+  sed -n -e "$tail_part_start,$tail_part_end p" -e "$tail_part_end q" /mnt/boot/grub/grub.cfg > /tmp/grub_tail.cfg
+
+  # Generate new GRUB config file.
+  cat /tmp/grub_head.cfg /tmp/grub_$menuentry_id.cfg /tmp/grub_tail.cfg > /tmp/grub.cfg
+  chmod a-w /tmp/grub.cfg
+  mv /tmp/grub.cfg /mnt/boot/grub/grub.cfg
+fi
 
 # Do not make this to appear in ONIE menu.
 onie_kernel_file="`ls /mnt/boot/onie/vmlinuz-*-onie | head -n 1`"
