@@ -124,7 +124,7 @@ ${reserved_dev_num}
 ${reserved_dev_start}
 ${reserved_dev_end}
 
-w" | fdisk $target_dev
+w" | fdisk $target_dev &>/dev/null
 
 echo "Installing image from ${image_location}..."
 ./curl -s "${image_location}" | bzip2 -dc | ./partclone.restore -s - -o "${target_dev}"2 || {
