@@ -246,7 +246,7 @@ GRUB_DEFAULT=0
 GRUB_HIDDEN_TIMEOUT_QUIET=true
 GRUB_TIMEOUT=10
 GRUB_DISTRIBUTOR=\`lsb_release -i -s 2> /dev/null || echo Debian\`
-GRUB_CMDLINE_LINUX_DEFAULT="quiet nomodeset reboot=pci irqpoll"
+GRUB_CMDLINE_LINUX_DEFAULT="quiet nomodeset irqpoll"
 GRUB_CMDLINE_LINUX="console=tty0 console=ttyS0,115200n8"
 
 # Uncomment to enable BadRAM filtering, modify to suit your needs
@@ -427,7 +427,7 @@ menuentry '$iss_image_name' --class debian --class gnu-linux --class gnu --class
         set root='(hd0,msdos1)'
         search --no-floppy --fs-uuid --set=root $BOOT_UUID
         echo    'Loading $iss_image_name ...'
-        linux   /$iss_kernel_file root="${target_dev}2" ro console=tty0 console=ttyS0,115200n8 quiet nomodeset reboot=pci irqpoll
+        linux   /$iss_kernel_file root="${target_dev}2" ro console=tty0 console=ttyS0,115200n8 quiet nomodeset irqpoll
         echo    'Loading initial ramdisk ...'
         initrd  /$iss_ramdisk_file
 }
