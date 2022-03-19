@@ -1,13 +1,29 @@
 #!/bin/sh
 
-#
-# Interface Masters Technologies, Inc. 2016
-#
+######################################################################
+#  INTERFACE MASTERS CONFIDENTIAL & PROPRIETARY                      #
+#  __________________                                                #
+#                                                                    #
+#   2022-present Interface Masters Technologies, Inc.                #
+#                                                                    #
+#  All information contained herein is                               #
+#  the proprietary property of Interface Masters Technologies, Inc., #
+#  and are protected by trade secret or copyright law.               #
+#  Dissemination of this information or reproduction of this material#
+#  is strictly forbidden unless prior written permission is obtained #
+#  from Interface Masters Technologies.                              #
+#                                                                    #
+######################################################################
 
 # IMT installer has restrictions on names for installer and image.
 # But ONIE has inexact names that may not end with .sh.
 # In this case image still should be ended with '-image.bin'.
 image_location=`echo "${onie_exec_url}" | sed -e 's/[\.sh]*$/-image.bin/'`
+
+# Note: to use traps below, just set to 1
+DEBUG=0
+# Note: For debug purposes use just one partition instead of creating dual-boot
+DEBUG_USE_ONE_PARTITION=0
 
 # Check for presence of installer image before repartitioning ssd.
 echo "Check image file presence at ${image_location}..."
@@ -52,66 +68,208 @@ install_device_platform()
 
 target_dev=`install_device_platform`
 
+echo "Target dev is ${target_dev}"
+
 [ ! -b ${target_dev} ] && {
 echo "No target device detected."
 exit 1
 }
 
-umount "${target_dev}1" 2>/dev/null
-umount "${target_dev}2" 2>/dev/null
-umount "${target_dev}3" 2>/dev/null
-umount "${target_dev}4" 2>/dev/null
-umount "${target_dev}5" 2>/dev/null
+################################################################################
+# Select onie dev num in partition table (last partition)
+# Note: This is hardcoded due to fixed befaviour
+#
+# In case legacy boot (MSDOS):
+#    sda1 - "ONIE-BOOT" partition
+#    sda2 - ROOT1 (ISS image for the first OS)
+#    sda3 - ROOT2 (ISS image for the second OS) (optional)
+# In case legacy boot (GPT):
+#    sda1 - "GRUB-BOOT" partition
+#    sda2 - "ONIE-BOOT" partition
+#    sda3 - ROOT1 (ISS image for the first OS)
+#    sda4 - ROOT2 (ISS image for the second OS) (optional)
+# In case UEFI boot (GPT and MSDOS):
+#    sda1 - "EFI System" (ESP) partition
+#    sda2 - "ONIE-BOOT"
+#    sda3 - ROOT1 (ISS image for the first OS)
+#    sda4 - ROOT2 (ISS image for the second OS) (optional)
+################################################################################
+boot_dir="/boot"
+onie_boot_dir="/mnt/onie-boot"
+mount_dir="/mnt/iss_rootfs"
+iss_boot_dir="${mount_dir}/boot"
+if [[ "$(parted -l | grep -o 'gpt')" = "gpt" ]]; then
+    partition_type="gpt"
+else
+    partition_type="msdos"
+fi
+iss_volume_label="ROOT"
+if [ -d "/sys/firmware/efi/efivars" ]; then
+    boot_mode="uefi"
+    uefi_esp_mnt="${mount_dir}/efi"
+    echo "Boot mode is UEFI"
+    efi_dev_num=1
+    onie_dev_num=2
+    iss_inst_dev_num=3
+    reserved_dev_num=4
+else
+    boot_mode="legacy"
+    echo "Boot mode is Legacy"
+    if [[ "${partition_type}" = "gpt" ]]; then
+        onie_dev_num=2
+        iss_inst_dev_num=3
+        reserved_dev_num=4
+    else
+        onie_dev_num=1
+        iss_inst_dev_num=2
+        reserved_dev_num=3
+    fi
+fi
 
-parted -ms "${target_dev}" \
- `parted -ms "${target_dev}" "unit s" "print" | \
- egrep "^[0-9]+:" | egrep -v "^1:" | cut -d: -f1 | sort -rn | \
- sed -e 's/^/"rm /' -e 's/:.\+$/"/' `
+# Check the partition type, MBR (msdos) or GPT
+echo "Unmount all partitions..."
+if [ "${partition_type}" = "gpt" ] || [ "${boot_mode}" = "uefi" ]; then
+    umount "${target_dev}3" 2>/dev/null
+    umount "${target_dev}4" 2>/dev/null
+    umount "${target_dev}5" 2>/dev/null
+else
+    umount "${target_dev}1" 2>/dev/null
+    umount "${target_dev}2" 2>/dev/null
+    umount "${target_dev}3" 2>/dev/null
+    umount "${target_dev}4" 2>/dev/null
+    umount "${target_dev}5" 2>/dev/null
+fi
 
-lastsector=`parted -ms "${target_dev}" "unit s" "print" | \
-egrep "^1:" | cut -d: -f3 | tr -d 's'`
+if [ "${boot_mode}" = "uefi" ]; then
+    echo "Selected partition ${target_dev}${efi_dev_num} for EFI"
+fi
+echo "Selected partition ${target_dev}${onie_dev_num} for ONIE"
+echo "Selected partition ${target_dev}${iss_inst_dev_num} for OS1"
+echo "Selected partition ${target_dev}${reserved_dev_num} for OS2 (reserved)"
 
-[ "$lastsector" = "" ] && {
-  if [ -x /self-installer/format-installer.sh ] ; then
-  /self-installer/format-installer.sh
-  parted -ms "${target_dev}" \
-  `parted -ms "${target_dev}" "unit s" "print" | \
-  egrep "^[0-9]+:" | egrep -v "^1:" | cut -d: -f1 | sort -rn | \
-   sed -e 's/^/"rm /' -e 's/:.\+$/"/' `
-  lastsector=`parted -ms "${target_dev}" "unit s" "print" | \
-  egrep "^1:" | cut -d: -f3 | tr -d 's'`
-  [ "$lastsector" = "" ] && {
-    echo "Installation failed."
-    exit 1
+if [ "${partition_type}" = "gpt" ] || [ "${boot_mode}" = "uefi" ]; then
+    # Delete the previous partitions for NOS, the onie and esp partitions are untouched
+    echo "Removing partition ${target_dev}${iss_inst_dev_num}..."
+    parted -ms "${target_dev}" \
+     `parted -ms "${target_dev}" "unit s" "print" | \
+     egrep "^[0-9]+:" | grep "^${iss_inst_dev_num}:" | cut -d: -f1 | sort -rn | \
+     sed -e 's/^/"rm /' -e 's/:.\+$/"/' `
+    echo "Removing partition ${target_dev}${reserved_dev_num}..."
+    parted -ms "${target_dev}" \
+     `parted -ms "${target_dev}" "unit s" "print" | \
+     egrep "^[0-9]+:" | grep "^${reserved_dev_num}:" | cut -d: -f1 | sort -rn | \
+     sed -e 's/^/"rm /' -e 's/:.\+$/"/' `
+else
+    parted -ms "${target_dev}" \
+     `parted -ms "${target_dev}" "unit s" "print" | \
+     egrep "^[0-9]+:" | egrep -v "^${onie_dev_num}:" | cut -d: -f1 | sort -rn | \
+     sed -e 's/^/"rm /' -e 's/:.\+$/"/' `
+
+    lastsector=`parted -ms "${target_dev}" "unit s" "print" | \
+    egrep "^${onie_dev_num}:" | cut -d: -f3 | tr -d 's'`
+
+    [ "$lastsector" = "" ] && {
+      if [ -x /self-installer/format-installer.sh ] ; then
+      /self-installer/format-installer.sh
+      parted -ms "${target_dev}" \
+      `parted -ms "${target_dev}" "unit s" "print" | \
+      egrep "^[0-9]+:" | egrep -v "^${onie_dev_num}:" | cut -d: -f1 | sort -rn | \
+       sed -e 's/^/"rm /' -e 's/:.\+$/"/' `
+      lastsector=`parted -ms "${target_dev}" "unit s" "print" | \
+      egrep "^${onie_dev_num}:" | cut -d: -f3 | tr -d 's'`
+      [ "$lastsector" = "" ] && {
+        echo "Installation failed."
+        exit 1
+        }
+      else
+        echo "Incompatible partition format on the device ${target_dev}."
+        exit 1
+      fi
     }
-  else
-    echo "Incompatible partition format on the device ${target_dev}."
-    exit 1
-  fi
-}
+fi
 
-newsector="$((${lastsector}+1))"
 
-parted -msaoptimal "$target_dev" "mkpart primary ext4 ${newsector}s -1s"
+if [ "${partition_type}" = "gpt" ] || \
+    [ "${partition_type}" = "msdos" ] && [ "${boot_mode}" = "uefi" ]; then
+    # Note: for GPT we will create two partitions in one shot
+    total_sectors=$(parted -ms ${target_dev} "unit s print" | grep "^${target_dev}" | cut -d: -f2 | tr -d 's')
+    free_sector_start=$(parted -ms ${target_dev} "unit s print"  | grep "^${onie_dev_num}:" | cut -d: -f3 | tr -d 's')
+    first_part_start=$(( ${free_sector_start} + 1 ))
+    first_part_end=$(( (${total_sectors} - ${free_sector_start}) / 2))
+    second_part_start=$(( ${first_part_end} + 1 ))
+    if [ "${partition_type}" = "msdos" ]; then
+        second_part_end=$(( ${total_sectors} - 1 ))
+    else
+        # Note: (total_sectors - 34) - is magic number that fits the alignment rules, so use 100% instead...
+        second_part_end=$(( ${total_sectors} - 34 ))
+    fi
+    echo "second_part_end=$second_part_end"
+    if [[ "${DEBUG_USE_ONE_PARTITION}" = "1" ]]; then
+        echo "Single partition mode selected."
+        if [ "${partition_type}" = "msdos" ]; then
+            parted -msaoptimal "$target_dev" "mkpart primary ext4 ${first_part_start}s 100%"
+        else
+            parted -msaoptimal "$target_dev" "mkpart ${iss_volume_label}1 ext4 ${first_part_start}s 100%"
+        fi
+    else
+        echo "Dual-boot partitions selected."
+        if [ "${partition_type}" = "msdos" ]; then
+            parted -msaoptimal "$target_dev" "mkpart primary ext4 ${first_part_start}s ${first_part_end}s"
+            parted -msaoptimal "$target_dev" "mkpart primary ext4 ${second_part_start}s 100%"
+        else
+            parted -msaoptimal "$target_dev" "mkpart ${iss_volume_label}1 ext4 ${first_part_start}s ${first_part_end}s"
+            parted -msaoptimal "$target_dev" "mkpart ${iss_volume_label}2 ext4 ${second_part_start}s 100%"
+        fi
+    fi
+else
+    newsector="$((${lastsector}+1))"
+    echo "New sector is ${newsector}"
+    echo "Creating partition..."
+    parted -msaoptimal "$target_dev" "mkpart primary ext4 ${newsector}s 100%"
+fi
 
 sync
-until blockdev --rereadpt "${target_dev}"
-do sleep 1
-done
 
-# Create partitions for image install and reserved partitions
-iss_inst_dev_num=2
-reserved_dev_num=3
+if [[ "$DEBUG" = "1" ]]; then
+    read -p "About to update partitions for kernel..."
+fi
 
-free_dev_start=$(fdisk -l $target_dev | grep ${target_dev}2 | awk '{print $2}' | tr -d '\n')
-free_dev_end=$(fdisk -l $target_dev | grep ${target_dev}2 | awk '{print $3}' | tr -d '\n')
-free_sector_range=$(( ${free_dev_end} - ${free_dev_start} ))
-if [ $((free_sector_range%2)) -ne 0 ]; then free_sector_range=$(( $free_sector_range - 1 )); fi
-iss_inst_dev_end=$(( $free_sector_range / 2 ))
-reserved_dev_start=$(( ${iss_inst_dev_end} + 1 ))
-reserved_dev_end=$(( ${free_dev_end} - 1 ))
+if [ "${boot_mode}" = "legacy" -a "${partition_type}" = "msdos" ]; then
+    # In case legacy boot we are unmounting all partitions, so the EBUSY will not be triggered
+    until blockdev --rereadpt "${target_dev}"
+    do sleep 1
+    done
+else
+    partprobe
+fi
 
-echo "d
+if [[ "$DEBUG" = "1" ]]; then
+    read -p "About to create partitions for dual-boot mode..."
+fi
+
+if [ "${partition_type}" = "msdos" ] && [ "${boot_mode}" = "legacy" ]; then
+    free_dev_start=$(fdisk -u -l $target_dev | grep "${target_dev}${iss_inst_dev_num}" | awk '{print $2}' | tr -d '\n')
+    free_dev_end=$(fdisk -u -l $target_dev | grep "${target_dev}${iss_inst_dev_num}" | awk '{print $3}' | tr -d '\n')
+    free_sector_range=$(( ${free_dev_end} - ${free_dev_start} ))
+    if [ $((free_sector_range%2)) -ne 0 ]; then free_sector_range=$(( $free_sector_range - 1 )); fi
+    iss_inst_dev_end=$(( $free_sector_range / 2 ))
+    reserved_dev_start=$(( ${iss_inst_dev_end} + 1 ))
+    reserved_dev_end=$(( ${free_dev_end} - 1 ))
+
+    if [[ "${DEBUG_USE_ONE_PARTITION}" = "1" ]]; then
+        echo "Formatting and splitting single partition..."
+        echo "d
+${iss_inst_dev_num}
+n
+p
+${iss_inst_dev_num}
+${free_dev_start}
+${reserved_dev_end}
+
+w" | fdisk -u $target_dev &>/dev/null
+    else
+        echo "Formatting and splitting partition for dual-boot mode..."
+        echo "d
 ${iss_inst_dev_num}
 n
 p
@@ -124,94 +282,113 @@ ${reserved_dev_num}
 ${reserved_dev_start}
 ${reserved_dev_end}
 
-w" | fdisk $target_dev &>/dev/null
+w" | fdisk -u $target_dev &>/dev/null
+    fi # DEBUG_USE_ONE_PARTITION
+fi # partition_type
 
 echo "Installing image from ${image_location}..."
-./curl -s "${image_location}" | bzip2 -dc | ./partclone.restore -s - -o "${target_dev}"2 || {
-echo "Image installation failed."
-exit 1
+./curl -s "${image_location}" | bzip2 -dc | ./partclone.restore -s - -o "${target_dev}${iss_inst_dev_num}" || {
+    echo "Image installation failed."
+    exit 1
 }
 
-mkdir /mnt 2>/dev/null
+mkdir -p ${mount_dir}
 
 echo "Mounting target root filesystem..."
-until mount -t ext4 "${target_dev}2" /mnt
+until mount -t ext4 "${target_dev}${iss_inst_dev_num}" ${mount_dir}
 do sleep 1
 done
 echo "Done."
 
-echo "Saving /boot directory on the target root filesystem..."
-tar cz -C /mnt boot > /tmp/boot-fs.tar.gz
+if [[ "$DEBUG" = "1" ]]; then
+    read -p "Updating /boot dir - Done... Press <enter> key to continue..."
+fi
+
+echo "Saving $iss_boot_dir directory on the target root filesystem..."
+tar -czf /tmp/boot-fs.tar.gz -C ${iss_boot_dir} .
 echo "Done."
 
-echo "Removing /boot directory from the target root filesystem..."
-rm -rf /mnt/boot
+if [[ "$DEBUG" = "1" ]]; then
+    read -p "About to remove ${iss_boot_dir}... Press <enter> key to continue..."
+fi
+
+echo "Removing ${iss_boot_dir} directory from the target root filesystem..."
+rm -rf ${iss_boot_dir}
 echo "Done."
 
-echo "Creating empty /boot directory on the target root filesystem..."
-mkdir /mnt/boot
-echo "Done."
+if [ ! -d "${mount_dir}/boot" ]; then
+    echo "Creating empty ${mount_dir}/boot directory on the target root filesystem..."
+    mkdir -p ${mount_dir}/boot
+    echo "Done."
+fi
 
-echo "Mounting target boot filesystem..."
-until mount -t ext2 "${target_dev}1" /mnt/boot
-do sleep 1
-done
-echo "Done."
+onie_is_mounted="$(mount | grep ${target_dev}${onie_dev_num} | grep ${mount_dir}/boot)"
+if [ -z "${onie_is_mounted}" ]; then
+    echo "Mounting target boot filesystem..."
+    until mount -t ext2 "${target_dev}${onie_dev_num}" ${mount_dir}/boot
+    do sleep 1
+    done
+    echo "Done."
+fi
 
-echo "Restoring /boot directory to the boot filesystem"
-tar xz -C /mnt < /tmp/boot-fs.tar.gz
+echo "Restoring /boot directory to the ONIE-BOOT filesystem"
+tar -xzf /tmp/boot-fs.tar.gz -C ${iss_boot_dir}
 rm /tmp/boot-fs.tar.gz
 echo "Done."
 
+if [[ "$DEBUG" = "1" ]]; then
+    read -p "Updating /boot dir - Done... Press <enter> key to continue..."
+fi
+
 echo "Mounting /dev, /sys, /proc directories on the target root filesystem..."
-mount -t tmpfs tmpfs-dev /mnt/dev
-tar c /dev | tar x -C /mnt
-mount --bind /sys /mnt/sys
-mount --bind /proc /mnt/proc
+mount -t tmpfs tmpfs-dev ${mount_dir}/dev
+tar c /dev | tar x -C ${mount_dir}
+mount --bind /sys ${mount_dir}/sys
+mount --bind /proc ${mount_dir}/proc
 echo "Done."
 
 echo "Copying disk utilities..."
-mkdir /tmp/utils
-cp /mnt/sbin/resize2fs /tmp/utils/
-cp -a /mnt/lib/x86_64-linux-gnu /lib/x86_64-linux-gnu
-cp -a /mnt/lib64 /lib64
-cp -a /mnt/sbin/e2fsck /tmp/utils/
-cp -a /mnt/sbin/fsck.ext2 /tmp/utils/
-cp -a /mnt/sbin/fsck.ext4 /tmp/utils/
+mkdir -p /tmp/utils
+cp ${mount_dir}/sbin/resize2fs /tmp/utils/
+cp -a ${mount_dir}/lib/x86_64-linux-gnu /lib/x86_64-linux-gnu
+cp -a ${mount_dir}/lib64 /lib64
+cp -a ${mount_dir}/sbin/e2fsck /tmp/utils/
+cp -a ${mount_dir}/sbin/fsck.ext2 /tmp/utils/
+cp -a ${mount_dir}/sbin/fsck.ext4 /tmp/utils/
 echo "Done."
 
 echo "Updating target filesystems UUIDs..."
-/mnt/sbin/tune2fs -U random "${target_dev}1"
-/mnt/sbin/tune2fs -U random "${target_dev}2"
+if [ "${boot_mode}" = "legacy" ]; then
+    /usr/sbin/tune2fs -U random "${target_dev}${onie_dev_num}"
+    /usr/sbin/tune2fs -U random "${target_dev}${iss_inst_dev_num}"
+fi
 sync
-BOOT_UUID=`/mnt/sbin/blkid -s UUID -o value -n ext2,ext3,ext4 "${target_dev}1"`
-ROOT_UUID=`/mnt/sbin/blkid -s UUID -o value -n ext2,ext3,ext4 "${target_dev}2"`
-rm -f "/mnt/dev/disk/by-uuid/${ROOT_UUID}"
-ln -s "${target_dev}2" "/mnt/dev/disk/by-uuid/${ROOT_UUID}"
+BOOT_UUID=`/usr/sbin/tune2fs -l ${target_dev}${onie_dev_num} | grep -o "^Filesystem UUID: .*" | awk '{print $3}'`
+ROOT_UUID=`/usr/sbin/tune2fs -l ${target_dev}${iss_inst_dev_num} | grep -o "^Filesystem UUID: .*" | awk '{print $3}'`
 echo "Done."
 
 echo "Generating list of mounted filesystems..."
-rm -f /mnt/etc/mtab
-egrep '^/dev/' /proc/mounts | grep '/mnt/' | sed -e 's@/mnt/@/@' > /mnt/etc/mtab
+rm -f ${mount_dir}/etc/mtab
+egrep '^/dev/' /proc/mounts | grep '/mnt/' | sed -e 's@/mnt/@/@' > ${mount_dir}/etc/mtab
 echo "Done."
 
 echo "Generating /etc/fstab for the target root filesystem..."
-cat > /mnt/etc/fstab <<___EOF___
+cat > ${mount_dir}/etc/fstab <<___EOF___
 # fstab
 UUID=${ROOT_UUID}	/	ext4	discard,errors=continue,noatime	0	1
-UUID=${BOOT_UUID}	/boot	ext2	defaults,noatime	0	1
+UUID=${BOOT_UUID}	${boot_dir}	ext2	defaults,noatime	0	1
 ___EOF___
 echo "Done."
 
 # iss has special console login
-if [ ! -f /mnt/usr/bin/iss ] ; then
+if [ ! -f ${mount_dir}/usr/bin/iss ] ; then
     echo "Enabling login on the serial console..."
-    if [ -f /mnt/etc/inittab ] ; then
-      sed -i -e 's/^#\+T0:/T0:/' -e 's/ttyS0 9600 vt100$/ttyS0 115200 vt100/' /mnt/etc/inittab
+    if [ -f ${mount_dir}/etc/inittab ] ; then
+      sed -i -e 's/^#\+T0:/T0:/' -e 's/ttyS0 9600 vt100$/ttyS0 115200 vt100/' ${mount_dir}/etc/inittab
       echo "Done."
     else
-      if [ -d /mnt/etc/init/ ] ; then
-        cat > /mnt/etc/init/ttyS0.conf <<___EOF___
+      if [ -d ${mount_dir}/etc/init/ ] ; then
+        cat > ${mount_dir}/etc/init/ttyS0.conf <<___EOF___
 # ttyS0 - getty
 #
 # This service maintains a getty on tty1 from the point the system is
@@ -234,244 +411,207 @@ ___EOF___
     fi
 fi
 
+if [[ "$DEBUG" = "1" ]]; then
+    read -p "About to update GRUB. Press <enter> key to continue..."
+fi
+
 echo "Updating GRUB..."
-cat > /mnt/etc/default/grub <<___EOF___
-# If you change this file, run 'update-grub' afterwards to update
-# /boot/grub/grub.cfg.
-# For full documentation of the options in this file, see:
-#   info -f grub -n 'Simple configuration'
+grub_default_path="/tmp/grub-variables"
+grub_onie_path="/tmp/50_onie_grub_imt"
 
-GRUB_DEFAULT=0
-#GRUB_HIDDEN_TIMEOUT=0
-GRUB_HIDDEN_TIMEOUT_QUIET=true
-GRUB_TIMEOUT=10
-GRUB_DISTRIBUTOR=\`lsb_release -i -s 2> /dev/null || echo Debian\`
-GRUB_CMDLINE_LINUX_DEFAULT="quiet nomodeset irqpoll hpet=disable fsck.mode=force fsck.repair=yes"
-GRUB_CMDLINE_LINUX="console=tty0 console=ttyS0,115200n8"
+# Import grub-variables from install package
+cp grub-variables ${grub_default_path}
 
-# Uncomment to enable BadRAM filtering, modify to suit your needs
-# This works with Linux (no patch required) and with any kernel that obtains
-# the memory map information from GRUB (GNU Mach, kernel of FreeBSD ...)
-#GRUB_BADRAM="0x01234567,0xfefefefe,0x89abcdef,0xefefefef"
+# Import script to add NOS entry and ONIE submenu
+cp 50_onie_grub_imt ${grub_onie_path}
 
-# Uncomment to disable graphical terminal (grub-pc only)
-#GRUB_TERMINAL=console
-GRUB_TERMINAL=serial
-GRUB_SERIAL_COMMAND="serial --speed=115200 --unit=0 --word=8 --parity=no --stop=1"
+if [[ "$DEBUG" = "1" ]]; then
+    read -p "About to grub-install. Press <enter> key to continue..."
+fi
 
-# The resolution used on graphical terminal
-# note that you can use only modes which your graphic card supports via VBE
-# you can see them in real GRUB with the command \`vbeinfo'
-#GRUB_GFXMODE=640x480
+cp ${grub_onie_path} ${mount_dir}/etc/grub.d/50_onie_grub
+cp ${grub_default_path} ${mount_dir}/etc/default/grub
+chmod 755 ${mount_dir}/etc/grub.d/50_onie_grub
 
-# Uncomment if you don't want GRUB to pass "root=UUID=xxx" parameter to Linux
-#GRUB_DISABLE_LINUX_UUID=true
-
-# Uncomment to disable generation of recovery mode menu entries
-#GRUB_DISABLE_RECOVERY="true"
-
-# Uncomment to get a beep at grub start
-#GRUB_INIT_TUNE="480 440 1"
-___EOF___
-cat > /mnt/etc/grub.d/50_onie_grub <<___EOF___
-#!/bin/sh
-
-#  Copyright (C) 2014 Curt Brune <curt@cumulusnetworks.com>
-#  Copyright (C) 2015 Interface Masters Technologies, Inc.
-#
-#  SPDX-License-Identifier:     GPL-2.0
-
-# This file provides a GRUB menu entry for ONIE.
-#
-# Place this file in /etc/grub.d on the installed system, and grub-mkconfig
-# will use this file when generating a grub configuration file.
-#
-# This partition layout uses the same ONIE-BOOT partition for ONIE and OS boot
-# files, so only one GRUB menu has to be updated.
-
-tmp_mnt=
-onie_umount_partition()
-{
-    umount \$tmp_mnt > /dev/null 2>&1
-    rmdir \$tmp_mnt || {
-        echo "ERROR: Problems removing temp directory: \$tmp_mnt"
-        exit 1
+if [ "${boot_mode}" = "uefi" ]; then
+    efi_root_path="/boot/efi"
+    if [ ! -d "${efi_root_path}" ]; then
+        mkdir -p "${efi_root_path}"
+        mount -t vfat "${target_dev}${efi_dev_num}" "${efi_root_path}"
+    fi
+    grub-install \
+        --target=x86_64-efi \
+        --no-nvram \
+        --bootloader-id="${iss_volume_label}1" \
+        --efi-directory="${efi_root_path}" \
+        --boot-directory="${mount_dir}/boot" \
+        "${target_dev}" 2>&1 || {
+        echo "ERROR: grub-install failed on: ${target_dev}"
     }
-}
+    chroot ${mount_dir} update-grub || echo "Error: update-grub failed with error $?"
 
-# Mount the ONIE partition
-tmp_mnt=\$(mktemp -d)
-trap onie_umount_partition EXIT
+    efibootmgr --quiet --create \
+        --label "${iss_volume_label}1" \
+        --disk ${target_dev} --part ${efi_dev_num} \
+        --loader "/EFI/${iss_volume_label}1/grubx64.efi" || {
+        echo "ERROR: efibootmgr failed to create new boot variable on: ${target_dev}"
+    }
 
-mount LABEL=ONIE-BOOT \$tmp_mnt || {
-    echo "ERROR: Problems trying to mount ONIE-BOOT partition"
-    exit 1
-}
+    boot_num=$(efibootmgr -v | grep "${iss_volume_label}1" | grep ')/File(' | \
+        tail -n 1 | awk '{ print $1 }' | sed -e 's/Boot//' -e 's/\*//')
+    boot_order=$(efibootmgr | grep BootOrder: | awk '{ print $2 }' | \
+        sed -e s/,$boot_num// -e s/$boot_num,// -e s/$boot_num//)
+    if [ -n "$boot_order" ] ; then
+        boot_order="${boot_num},$boot_order"
+    else
+        boot_order="$boot_num"
+    fi
+    efibootmgr --quiet --bootorder "$boot_order" || {
+        echo "ERROR: efibootmgr failed to set new boot order"
+        return 1
+    }
+else
+    if [[ "${partition_type}" = "gpt" ]]; then
+        core_img="${iss_boot_dir}/grub/i386-pc/core.img"
+        [ -f "${core_img}" ] && chattr -i ${core_img}
+        grub-install --boot-directory="${iss_boot_dir}/" "${target_dev}" 2>&1 || {
+            echo "ERROR: grub-install failed on: ${target_dev}"
+        }
+        chroot ${mount_dir} update-grub || echo "Error: update-grub failed with error $?"
+        [ -f "${core_img}" ] && chattr +i ${core_img}
+    else
+        rm -rf ${boot_dir}/vmlinuz-00-onie
+        rm -rf ${boot_dir}/initrd.img-00-onie
+        [ -f "${iss_boot_dir}/grub/i386-pc/core.img" ] && chattr -i ${iss_boot_dir}/grub/i386-pc/core.img
+        chroot ${mount_dir} grub-install "${target_dev}"
+        chroot ${mount_dir} update-grub
+        chroot ${mount_dir} grub-install "${target_dev}"
+        [ -f "${iss_boot_dir}/grub/i386-pc/core.img" ] && chattr +i ${iss_boot_dir}/grub/i386-pc/core.img
+    fi # partition_type
+fi # boot_mode
 
-onie_root_dir="\${tmp_mnt}/onie"
-[ -d "\$onie_root_dir" ] || {
-    echo "ERROR: Unable to find ONIE root directory: \$onie_root_dir"
-    exit 1
-}
-
-# add the ONIE machine configuration data
-cat \$onie_root_dir/grub/grub-machine.cfg
-
-# common etries from grub-common.cfg
-cat << EOF
-
-set timeout=5
-
-onie_submenu="ONIE (Version: \\\$onie_version)"
-
-onie_menu_install="ONIE: Install OS"
-export onie_menu_install
-onie_menu_rescue="ONIE: Rescue"
-export onie_menu_rescue
-onie_menu_uninstall="ONIE: Uninstall OS"
-export onie_menu_uninstall
-onie_menu_update="ONIE: Update ONIE"
-export onie_menu_update
-onie_menu_embed="ONIE: Embed ONIE"
-export onie_menu_embed
-
-set fallback="\\\${onie_menu_rescue}"
-
-function onie_entry_start {
-  insmod gzio
-  insmod ext2
-  if [ "\\\$onie_partition_type" = "gpt" ] ; then
-    insmod part_gpt
-    set root='(hd0,gpt2)'
-  else
-    insmod part_msdos
-    set root='(hd0,msdos1)'
-  fi
-  search --no-floppy --label --set=root ONIE-BOOT
-}
-
-function onie_entry_end {
-  echo "Version   : \\\$onie_version"
-  echo "Build Date: \\\$onie_build_date"
-}
-EOF
-# end of grub-common.cfg
-
-DEFAULT_CMDLINE="\$GRUB_CMDLINE_LINUX \$GRUB_CMDLINE_LINUX_DEFAULT \$GRUB_ONIE_PLATFORM_ARGS \$GRUB_ONIE_DEBUG_ARGS"
-GRUB_ONIE_CMDLINE_LINUX=\${GRUB_ONIE_CMDLINE_LINUX:-"\$DEFAULT_CMDLINE"}
-
-ONIE_CMDLINE="quiet \$GRUB_ONIE_CMDLINE_LINUX"
-cat << EOF
-submenu ONIE {
-EOF
-for mode in install rescue uninstall update embed ; do
-    case "\$mode" in
-        install)
-            boot_message="ONIE: OS Install Mode ..."
-            ;;
-        rescue)
-            boot_message="ONIE: Rescue Mode ..."
-            ;;
-        uninstall)
-            boot_message="ONIE: OS Uninstall Mode ..."
-            ;;
-        update)
-            boot_message="ONIE: ONIE Update Mode ..."
-            ;;
-        embed)
-            boot_message="ONIE: ONIE Embed Mode ..."
-            ;;
-        *)
-            ;;
-    esac
-      cat <<EOF
-menuentry "\\\$onie_menu_\$mode" {
-        onie_entry_start
-        echo    "\$boot_message"
-        linux   /onie/vmlinuz-\\\${onie_kernel_version}-onie \$ONIE_CMDLINE boot_reason=\$mode
-        initrd  /onie/initrd.img-\\\${onie_kernel_version}-onie
-        onie_entry_end
-}
-EOF
-done
-cat << EOF
-}
-EOF
-___EOF___
-chmod 755 /mnt/etc/grub.d/50_onie_grub
-
-rm -rf /mnt/boot/vmlinuz-00-onie
-rm -rf /mnt/boot/initrd.img-00-onie
-
-chattr -i /mnt/boot/grub/i386-pc/core.img
-chroot /mnt grub-install "${target_dev}"
-chroot /mnt update-grub
-chroot /mnt grub-install "${target_dev}"
-chattr +i /mnt/boot/grub/i386-pc/core.img
+if [[ "$DEBUG" = "1" ]]; then
+    read -p "About to create ISS menuentry in GRUB. Press <enter> key to continue..."
+fi
 
 # Modify GRUB configuration file with the ISS custom entries
-if [ -f /mnt/usr/bin/iss ] ; then
-  iss_image_version=$(chroot /mnt dpkg -l | grep "Switching platform" | awk '{print $3}' | tr -d '\n')
-  iss_image_name=$(echo "iss-release-$iss_image_version" | tr -d '\n')
-  menuentry_id=0
-  iss_kernel_file="`ls /mnt/boot/vmlinuz-*-im-amd64 | rev | cut -d'/' -f 1 | rev | tr -d '\n'`"
-  iss_ramdisk_file="`ls /mnt/boot/initrd.img-*-im-amd64 | rev | cut -d'/' -f 1 | rev | tr -d '\n'`"
+if [ -f ${mount_dir}/usr/bin/iss ] ; then
+    # iss and iss-dbg packages has the same description, so take only the first version
+    iss_image_version=$(chroot ${mount_dir} dpkg -l | grep "Switching platform" | awk '{print $3}' | head -n 1 | tr -d '\n')
+    iss_image_name=$(echo "iss-release-$iss_image_version" | tr -d '\n')
+    menuentry_id=0
+    iss_kernel_file="`ls ${iss_boot_dir}/vmlinuz-*-im-amd64 | rev | cut -d'/' -f 1 | rev | tr -d '\n'`"
+    iss_ramdisk_file="`ls ${iss_boot_dir}/initrd.img-*-im-amd64 | rev | cut -d'/' -f 1 | rev | tr -d '\n'`"
 
-  cat > /tmp/grub_$menuentry_id.cfg <<___EOF___
-menuentry '$iss_image_name' --class debian --class gnu-linux --class gnu --class os {
-        entry_id=$menuentry_id
-        load_video
-        insmod gzio
-        insmod part_msdos
-        insmod ext2
-        set root='(hd0,msdos1)'
-        search --no-floppy --fs-uuid --set=root $BOOT_UUID
-        echo    'Loading $iss_image_name ...'
-        linux   /$iss_kernel_file root="${target_dev}2" ro console=tty0 console=ttyS0,115200n8 quiet nomodeset irqpoll hpet=disable fsck.mode=force fsck.repair=yes
-        echo    'Loading initial ramdisk ...'
-        initrd  /$iss_ramdisk_file
+    fs_uuid=${BOOT_UUID}
+    if [ "${partition_type}" = "gpt" ]; then
+        menuentry_partition_module="part_gpt"
+    else
+        menuentry_partition_module="part_msdos"
+    fi
+
+    cat > /tmp/grub_$menuentry_id.cfg <<___EOF___
+### BEGIN /etc/grub.d/10_linux ###
+menuentry '$iss_image_name' --unrestricted --class debian --class gnu-linux --class gnu --class os {
+    entry_id=$menuentry_id
+    insmod ext2
+    insmod gzio
+    insmod ${menuentry_partition_module}
+    search --no-floppy --set=root --fs-uuid ${fs_uuid}
+    echo    'Loading $iss_image_name ...'
+    linux   /$iss_kernel_file root="${target_dev}${iss_inst_dev_num}" ro console=tty0 console=ttyS0,115200n8 quiet nomodeset irqpoll hpet=disable fsck.mode=force fsck.repair=yes
+    echo    'Loading initial ramdisk ...'
+    initrd  /$iss_ramdisk_file
 }
+### END /etc/grub.d/10_linux ###
 ___EOF___
 
-  # Head part.
-  head_part_start=1
-  head_part_end=$(grep -rn "### BEGIN /etc/grub.d/10_linux ###" /mnt/boot/grub/grub.cfg | awk -F: '{print $1}' | tr -d '\n')
-  sed -n -e "$head_part_start,$head_part_end p" -e "$head_part_end q" /mnt/boot/grub/grub.cfg > /tmp/grub_head.cfg
+    grub_cfg="/tmp/grub_base_${menuentry_id}.cfg"
 
-  # Tail part.
-  tail_part_start=$(grep -rn "### END /etc/grub.d/10_linux ###" /mnt/boot/grub/grub.cfg | awk -F: '{print $1}' | tr -d '\n')
-  tail_part_end=$(grep -rn "### END /etc/grub.d/50_onie_grub ###" /mnt/boot/grub/grub.cfg | awk -F: '{print $1}' | tr -d '\n')
-  sed -n -e "$tail_part_start,$tail_part_end p" -e "$tail_part_end q" /mnt/boot/grub/grub.cfg > /tmp/grub_tail.cfg
+    touch $grub_cfg
 
-  # Generate new GRUB config file.
-  cat /tmp/grub_head.cfg /tmp/grub_$menuentry_id.cfg /tmp/grub_tail.cfg > /tmp/grub.cfg
-  chmod a-w /tmp/grub.cfg
-  mv /tmp/grub.cfg /mnt/boot/grub/grub.cfg
+    if [[ "${partition_type}" = "gpt" ]]; then
+        [ -f "${onie_boot_dir}/onie/grub/grub-extra.cfg" ] && cat ${onie_boot_dir}/onie/grub/grub-extra.cfg >> $grub_cfg
+    else
+        [ -f "${boot_dir}/onie/grub/grub-extra.cfg" ] && cat ${onie_boot_dir}/onie/grub/grub-extra.cfg >> $grub_cfg
+    fi
+
+    . ${grub_default_path}
+    # cp ${grub_default_path} ${boot_dir}/onie/grub/grub-variables
+
+    cat <<EOF >> $grub_cfg
+if [ -s \$prefix/grubenv ]; then
+load_env
 fi
+if [ "\${next_entry}" ] ; then
+set default="\${next_entry}"
+set next_entry=
+save_env next_entry
+fi
+
+EOF
+
+    cat <<EOF >> $grub_cfg
+# begin: ONIE bootargs
+
+onie_initargs="$GRUB_CMDLINE_LINUX"
+onie_initargs_default="$GRUB_CMDLINE_LINUX_DEFAULT"
+onie_platformargs="$GRUB_ONIE_PLATFORM_ARGS"
+onie_debugargs="$GRUB_ONIE_DEBUG_ARGS"
+GRUB_ONIE_CMDLINE_LINUX="$GRUB_ONIE_CMDLINE_LINUX"
+
+# end: ONIE bootargs
+EOF
+
+    cat /tmp/grub_$menuentry_id.cfg >> $grub_cfg
+    eval source ${grub_onie_path} >> $grub_cfg
+    cp $grub_cfg ${iss_boot_dir}/grub/grub.cfg
+fi
+
+if [[ "$DEBUG" = "1" ]]; then
+    read -p "About to copy onie kernel and rootfs. Press <enter> key to continue..."
+fi
+
+echo "Updating ONIE from target system"
 
 # Do not make this to appear in ONIE menu.
-onie_kernel_file="`ls /mnt/boot/onie/vmlinuz-*-onie | head -n 1`"
-onie_ramdisk_file="`ls /mnt/boot/onie/initrd.img-*-onie | head -n 1`"
+onie_kernel_file="`ls ${iss_boot_dir}/onie/vmlinuz-*-onie | head -n 1`"
+onie_ramdisk_file="`ls ${iss_boot_dir}/onie/initrd.img-*-onie | head -n 1`"
 if [ -f "${onie_kernel_file}" -a -f "${onie_ramdisk_file}" ]
-  then
+then
     echo "Adding ONIE files..."
-    cp "${onie_kernel_file}" /mnt/boot/vmlinuz-00-onie
-    cp "${onie_ramdisk_file}" /mnt/boot/initrd.img-00-onie
+    cp "${onie_kernel_file}" ${onie_boot_dir}/onie/vmlinuz-00-onie
+    cp "${onie_ramdisk_file}" ${onie_boot_dir}/onie/initrd.img-00-onie
+fi
+echo "Done."
+
+if [[ "$DEBUG" = "1" ]]; then
+    read -p "About umount all partitions. Press <enter> key to continue..."
 fi
 
+echo "Un-mounting everything..."
+until umount ${mount_dir}/proc ; do sleep 1 ; done
+until umount ${mount_dir}/sys ; do sleep 1 ; done
+until umount ${mount_dir}/dev ; do sleep 1 ; done
+# umount ONIE-BOOT
+until umount ${target_dev}${onie_dev_num} ; do sleep 1 ; done
+# umount NOS
+until umount ${target_dev}${iss_inst_dev_num} ; do sleep 1 ; done
+
 echo "Done."
 
-echo "Un-mounting everything..."
-until umount /mnt/proc ; do sleep 1 ; done
-until umount /mnt/sys ; do sleep 1 ; done
-until umount /mnt/dev ; do sleep 1 ; done
-until umount /mnt/boot ; do sleep 1 ; done
-until umount /mnt ; do sleep 1 ; done
-echo "Done."
+if [[ "$DEBUG" = "1" ]]; then
+    read -p "About to fsck. Press <enter> key to continue..."
+fi
 
 echo "Resizing the target root filesystem..."
-/tmp/utils/fsck.ext4 -f -y "${target_dev}2"
-/tmp/utils/resize2fs "${target_dev}2"
+/tmp/utils/fsck.ext4 -f -y "${target_dev}${iss_inst_dev_num}"
+/tmp/utils/resize2fs "${target_dev}${iss_inst_dev_num}"
 echo "Done."
 echo "Installation finished successfully."
+
+if [[ "$DEBUG" = "1" ]]; then
+    read -p "About to reboot the system. Press <enter> key to continue..."
+fi
+
 exit 0
