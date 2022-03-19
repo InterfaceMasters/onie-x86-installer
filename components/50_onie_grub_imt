@@ -1,0 +1,140 @@
+#!/bin/sh
+
+#  Copyright (C) 2014 Curt Brune <curt@cumulusnetworks.com>
+#  Copyright (C) 2015 Interface Masters Technologies, Inc.
+#
+#  SPDX-License-Identifier:     GPL-2.0
+
+# This file provides a GRUB menu entry for ONIE.
+#
+# Place this file in /etc/grub.d on the installed system, and grub-mkconfig
+# will use this file when generating a grub configuration file.
+#
+# This partition layout uses the same ONIE-BOOT partition for ONIE and OS boot
+# files, so only one GRUB menu has to be updated.
+
+tmp_mnt=
+onie_umount_partition()
+{
+    umount $tmp_mnt > /dev/null 2>&1
+    rmdir $tmp_mnt || {
+        echo "ERROR: Problems removing temp directory: $tmp_mnt"
+        exit 1
+    }
+}
+
+# Mount the ONIE partition
+tmp_mnt=$(mktemp -d)
+trap onie_umount_partition EXIT
+
+mount LABEL=ONIE-BOOT $tmp_mnt || {
+    echo "ERROR: Problems trying to mount ONIE-BOOT partition"
+    exit 1
+}
+
+onie_root_dir="${tmp_mnt}/onie"
+[ -d "$onie_root_dir" ] || {
+    echo "ERROR: Unable to find ONIE root directory: $onie_root_dir"
+    exit 1
+}
+
+if [ -z "$GRUB_ONIE_SERIAL_COMMAND" ] ||
+    [ -z "$GRUB_CMDLINE_LINUX" ] ; then
+    if [ -e "grub-variables" ]; then
+        . grub-variables
+    elif [ -e "/etc/default/grub" ]; then
+        . /etc/default/grub
+    fi
+fi
+
+# add the ONIE machine configuration data
+cat $onie_root_dir/grub/grub-machine.cfg
+
+# common entries from grub-common.cfg
+cat << EOF
+$GRUB_SERIAL_COMMAND
+terminal_input serial
+terminal_output serial
+
+set timeout=5
+
+### BEGIN /etc/grub.d/50_onie_grub ###
+onie_submenu="ONIE (Version: \$onie_version)"
+
+onie_menu_install="ONIE: Install OS"
+export onie_menu_install
+onie_menu_rescue="ONIE: Rescue"
+export onie_menu_rescue
+onie_menu_uninstall="ONIE: Uninstall OS"
+export onie_menu_uninstall
+onie_menu_update="ONIE: Update ONIE"
+export onie_menu_update
+onie_menu_embed="ONIE: Embed ONIE"
+export onie_menu_embed
+
+set fallback="\${onie_menu_rescue}"
+
+function onie_entry_start {
+  insmod gzio
+  insmod ext2
+  echo "Partition table type is \${onie_partition_type}"
+  if [ "\$onie_partition_type" = "gpt" ] ; then
+    insmod part_gpt
+  else
+    insmod part_msdos
+  fi
+  search --no-floppy --label --set=root ONIE-BOOT
+}
+
+function onie_entry_end {
+  echo "Version   : \$onie_version"
+  echo "Build Date: \$onie_build_date"
+}
+EOF
+# end of grub-common.cfg
+
+DEFAULT_CMDLINE="$GRUB_CMDLINE_LINUX $GRUB_CMDLINE_LINUX_DEFAULT $GRUB_ONIE_PLATFORM_ARGS $GRUB_ONIE_DEBUG_ARGS"
+GRUB_ONIE_CMDLINE_LINUX=${GRUB_ONIE_CMDLINE_LINUX:-"$DEFAULT_CMDLINE"}
+
+ONIE_CMDLINE="quiet ${GRUB_ONIE_CMDLINE_LINUX}"
+ONIE_EXTRA_CMDLINE_LINUX="${EXTRA_CMDLINE_LINUX}"
+
+cat << EOF
+
+submenu "\$onie_submenu" {
+EOF
+for mode in install rescue uninstall update embed ; do
+    case "\$mode" in
+        install)
+            boot_message="ONIE: OS Install Mode ..."
+            ;;
+        rescue)
+            boot_message="ONIE: Rescue Mode ..."
+            ;;
+        uninstall)
+            boot_message="ONIE: OS Uninstall Mode ..."
+            ;;
+        update)
+            boot_message="ONIE: ONIE Update Mode ..."
+            ;;
+        embed)
+            boot_message="ONIE: ONIE Embed Mode ..."
+            ;;
+        *)
+            ;;
+    esac
+        cat << EOF
+menuentry "\$onie_menu_$mode" --unrestricted {
+        onie_entry_start
+        echo    "\$boot_message"
+        onie_args="${ONIE_CMDLINE} ${ONIE_EXTRA_CMDLINE_LINUX}"
+        linux   /onie/vmlinuz-\${onie_kernel_version}-onie \${onie_args} boot_reason=$mode
+        initrd  /onie/initrd.img-\${onie_kernel_version}-onie
+        onie_entry_end
+}
+EOF
+done
+cat << EOF
+}
+### END /etc/grub.d/50_onie_grub ###
+EOF
