@@ -103,6 +103,14 @@ cat << EOF
 
 submenu "\$onie_submenu" {
 EOF
+
+GRUB_LINUX_CMD="linux"
+GRUB_INITRD_CMD="initrd"
+if [ -d "/sys/firmware/efi/efivars" ]; then
+    GRUB_LINUX_CMD="linuxefi"
+    GRUB_INITRD_CMD="initrdefi"
+fi
+
 for mode in install rescue uninstall update embed ; do
     case "\$mode" in
         install)
@@ -128,8 +136,8 @@ menuentry "\$onie_menu_$mode" --unrestricted {
         onie_entry_start
         echo    "\$boot_message"
         onie_args="${ONIE_CMDLINE} ${ONIE_EXTRA_CMDLINE_LINUX}"
-        linux   /onie/vmlinuz-\${onie_kernel_version}-onie \${onie_args} boot_reason=$mode
-        initrd  /onie/initrd.img-\${onie_kernel_version}-onie
+        ${GRUB_LINUX_CMD}   /onie/vmlinuz-\${onie_kernel_version}-onie \${onie_args} boot_reason=$mode
+        ${GRUB_INITRD_CMD}  /onie/initrd.img-\${onie_kernel_version}-onie
         onie_entry_end
 }
 EOF
