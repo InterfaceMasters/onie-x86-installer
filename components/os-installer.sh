@@ -510,6 +510,19 @@ if [ -f ${mount_dir}/usr/bin/iss ] ; then
         menuentry_partition_module="part_msdos"
     fi
 
+    GRUB_LINUX_CMD="linux"
+    GRUB_INITRD_CMD="initrd"
+    GRUB_DEFAULT_CONSOLE_LINE=""
+    GRUB_EFI_MODE=""
+    if [ "$boot_mode" == "uefi" ]; then
+        GRUB_LINUX_CMD="linuxefi"
+        GRUB_INITRD_CMD="initrdefi"
+        GRUB_EFI_MODE="efi"
+        # Conga-MA5 uses ttyS2 console as default
+        if [ "$(/usr/bin/dmidecode -t baseboard | grep -ow 'conga-MA5')" == "conga-MA5" ]; then
+            GRUB_DEFAULT_CONSOLE_LINE="console=ttyS2,115200n8"
+        fi
+    fi
     cat > /tmp/grub_$menuentry_id.cfg <<___EOF___
 ### BEGIN /etc/grub.d/10_linux ###
 menuentry '$iss_image_name' --unrestricted --class debian --class gnu-linux --class gnu --class os {
@@ -518,10 +531,10 @@ menuentry '$iss_image_name' --unrestricted --class debian --class gnu-linux --cl
     insmod gzio
     insmod ${menuentry_partition_module}
     search --no-floppy --set=root --fs-uuid ${fs_uuid}
-    echo    'Loading $iss_image_name ...'
-    linux   /$iss_kernel_file root="${target_dev}${iss_inst_dev_num}" ro console=tty0 console=ttyS0,115200n8 quiet nomodeset irqpoll hpet=disable fsck.mode=force fsck.repair=yes
-    echo    'Loading initial ramdisk ...'
-    initrd  /$iss_ramdisk_file
+    echo    'Loading $iss_image_name ${GRUB_EFI_MODE}...'
+    ${GRUB_LINUX_CMD}   /$iss_kernel_file root="${target_dev}${iss_inst_dev_num}" ro console=tty0 ${GRUB_DEFAULT_CONSOLE_LINE} console=ttyS0,115200n8 quiet nomodeset irqpoll hpet=disable fsck.mode=force fsck.repair=yes
+    echo    'Loading initial ramdisk ${GRUB_EFI_MODE}...'
+    ${GRUB_INITRD_CMD}  /$iss_ramdisk_file
 }
 ### END /etc/grub.d/10_linux ###
 ___EOF___
