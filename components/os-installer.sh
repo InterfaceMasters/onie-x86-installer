@@ -357,14 +357,16 @@ cp -a ${mount_dir}/sbin/fsck.ext2 /tmp/utils/
 cp -a ${mount_dir}/sbin/fsck.ext4 /tmp/utils/
 echo "Done."
 
+TUNE2FS=`which tune2fs`
+
 echo "Updating target filesystems UUIDs..."
 if [ "${boot_mode}" = "legacy" ]; then
-    /usr/sbin/tune2fs -U random "${target_dev}${onie_dev_num}"
-    /usr/sbin/tune2fs -U random "${target_dev}${iss_inst_dev_num}"
+    ${TUNE2FS} -U random "${target_dev}${onie_dev_num}"
+    ${TUNE2FS} -U random "${target_dev}${iss_inst_dev_num}"
 fi
 sync
-BOOT_UUID=`/usr/sbin/tune2fs -l ${target_dev}${onie_dev_num} | grep -o "^Filesystem UUID: .*" | awk '{print $3}'`
-ROOT_UUID=`/usr/sbin/tune2fs -l ${target_dev}${iss_inst_dev_num} | grep -o "^Filesystem UUID: .*" | awk '{print $3}'`
+BOOT_UUID=`${TUNE2FS} -l ${target_dev}${onie_dev_num} | grep -o "^Filesystem UUID: .*" | awk '{print $3}'`
+ROOT_UUID=`${TUNE2FS} -l ${target_dev}${iss_inst_dev_num} | grep -o "^Filesystem UUID: .*" | awk '{print $3}'`
 echo "Done."
 
 echo "Generating list of mounted filesystems..."
