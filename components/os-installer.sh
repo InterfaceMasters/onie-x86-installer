@@ -180,12 +180,24 @@ cp -a /mnt/sbin/fsck.ext2 /tmp/utils/
 cp -a /mnt/sbin/fsck.ext4 /tmp/utils/
 echo "Done."
 
+TUNE2FS=`which tune2fs`
+if [[ -z "$TUNE2FS" ]] then;
+    TUNE2FS=/mnt/sbin/tune2fs
+    echo "WARNING: tune2fs isnt found (used fallback /mnt/sbin/tune2fs)"
+fi
+
+BLKID=`which blkid`
+if [[ -z "$BLKID" ]] then;
+    BLKID=/mnt/sbin/blkid
+    echo "WARNING: blkid isnt found (used fallback /mnt/sbin/blkid)"
+fi
+
 echo "Updating target filesystems UUIDs..."
-/mnt/sbin/tune2fs -U random "${target_dev}1"
-/mnt/sbin/tune2fs -U random "${target_dev}2"
+${TUNE2FS} -U random "${target_dev}1"
+${TUNE2FS} -U random "${target_dev}2"
 sync
-BOOT_UUID=`/mnt/sbin/blkid -s UUID -o value -n ext2,ext3,ext4 "${target_dev}1"`
-ROOT_UUID=`/mnt/sbin/blkid -s UUID -o value -n ext2,ext3,ext4 "${target_dev}2"`
+BOOT_UUID=`${BLKID} -s UUID -o value -n ext2,ext3,ext4 "${target_dev}1"`
+ROOT_UUID=`${BLKID} -s UUID -o value -n ext2,ext3,ext4 "${target_dev}2"`
 rm -f "/mnt/dev/disk/by-uuid/${ROOT_UUID}"
 ln -s "${target_dev}2" "/mnt/dev/disk/by-uuid/${ROOT_UUID}"
 echo "Done."
