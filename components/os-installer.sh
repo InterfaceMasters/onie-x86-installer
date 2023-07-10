@@ -181,13 +181,13 @@ cp -a /mnt/sbin/fsck.ext4 /tmp/utils/
 echo "Done."
 
 TUNE2FS=`which tune2fs`
-if [[ -z "$TUNE2FS" ]] then;
+if [[ -z "$TUNE2FS" ]] ; then
     TUNE2FS=/mnt/sbin/tune2fs
     echo "WARNING: tune2fs isnt found (used fallback /mnt/sbin/tune2fs)"
 fi
 
 BLKID=`which blkid`
-if [[ -z "$BLKID" ]] then;
+if [[ -z "$BLKID" ]] ; then
     BLKID=/mnt/sbin/blkid
     echo "WARNING: blkid isnt found (used fallback /mnt/sbin/blkid)"
 fi
