@@ -196,8 +196,8 @@ echo "Updating target filesystems UUIDs..."
 ${TUNE2FS} -U random "${target_dev}1"
 ${TUNE2FS} -U random "${target_dev}2"
 sync
-BOOT_UUID=`${BLKID} -s UUID -o value -n ext2,ext3,ext4 "${target_dev}1"`
-ROOT_UUID=`${BLKID} -s UUID -o value -n ext2,ext3,ext4 "${target_dev}2"`
+BOOT_UUID=`${BLKID} -s UUID -o value -n ext2,ext3,ext4 "${target_dev}1" | cut -d\" -f 4`
+ROOT_UUID=`${BLKID} -s UUID -o value -n ext2,ext3,ext4 "${target_dev}2" | cut -d\" -f 4`
 rm -f "/mnt/dev/disk/by-uuid/${ROOT_UUID}"
 ln -s "${target_dev}2" "/mnt/dev/disk/by-uuid/${ROOT_UUID}"
 echo "Done."
